@@ -1,0 +1,61 @@
+import kagglehub
+import os
+import shutil
+from glob import glob
+from pyspark.sql.functions import current_timestamp, lit
+
+
+class Bronze:
+    def __init__(self):
+        self.bronze = "retail_transactions"
+        self.bronze_schema = "bronze"  
+
+    def extract(self):
+        local_folder = kagglehub.dataset_download("prasad22/retail-transactions-dataset")
+        local_files = glob(os.path.join(local_folder, "*.csv"))
+        if not local_files:
+            raise FileNotFoundError(f"No CSV files found in {local_folder}")
+
+        volume = f"/Volumes/{self.bronze}/{self.bronze_schema}/landing"
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.bronze}.{self.bronze_schema}")
+        spark.sql(f"CREATE VOLUME IF NOT EXISTS {self.bronze}.{self.bronze_schema}.landing")
+        spark_files = []
+
+        for local_file in local_files:
+            destination = os.path.join(volume, os.path.basename(local_file))
+            shutil.copyfile(local_file, destination)
+            spark_files.append(destination)
+        
+        return spark_files
+
+    def transformation(self, retail_transactions_files):
+        for retail_transactions_file in retail_transactions_files:
+            file_name = os.path.basename(retail_transactions_file)
+            table_name = file_name.replace('.csv', '').replace('-', '_').replace(' ', '_').lower()
+
+            df = df = spark.read.option("header", True).csv(retail_transactions_file)
+
+            df = (df
+                  .withColumn('bronz_ingtiosn_time', current_timestamp())
+                  .withColumn('file_name', lit(file_name))
+            )
+
+            table_path = f"{self.bronze}.{self.bronze_schema}.bronze_{table_name}"
+            self.load(df, table_path)
+            print(f"Loaded {df.count():,} rows -> {table_path}")
+
+
+    def load(self, df, table_path):
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.bronze}.{self.bronze_schema}")
+        df.write.format('delta').mode('append').saveAsTable(table_path)
+    
+    def process(self):
+        print("Start...")
+        retail_transactions_files = self.extract()
+        self.transformation(retail_transactions_files)
+        print("Finished...")
+
+
+if __name__ == "__main__":
+    bronze = Bronze()
+    bronze.process()
